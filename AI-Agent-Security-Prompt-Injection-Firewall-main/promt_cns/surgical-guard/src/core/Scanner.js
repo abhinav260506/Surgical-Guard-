@@ -91,6 +91,27 @@ export class Scanner {
 
         if (!pageText || pageText.trim().length === 0) return results;
 
+        // --- FEDERATED THREAT INTELLIGENCE: Pre-Check ---
+        try {
+            const federatedResponse = await chrome.runtime.sendMessage({
+                type: 'CHECK_FEDERATED',
+                payload: { textFragment: pageText.substring(0, 200) }
+            });
+
+            if (federatedResponse && federatedResponse.isKnownThreat) {
+                results.matches.push({
+                    detected: true,
+                    type: 'FEDERATED_KNOWN_THREAT',
+                    subtype: 'Global Immunity Match',
+                    score: 1.0,
+                    reasoning: [federatedResponse.message],
+                    match: pageText.substring(0, 60)
+                });
+            }
+        } catch (e) {
+            console.warn("Surgical-Guard: Federated check skipped", e);
+        }
+
         // --- FAST PATH: Synchronous Regex Scan ---
         try {
             console.log("Surgical-Guard: Running Fast Path (Regex)...");
@@ -153,6 +174,43 @@ export class Scanner {
             }
         } catch (error) {
             console.error("Surgical-Guard: Failed to get analysis from background.", error);
+        }
+
+        // --- INTENT ANCHOR: Semantic Drift Detection ---
+        try {
+            const storageResult = await new Promise(resolve => {
+                chrome.storage.local.get(['userIntent'], resolve);
+            });
+
+            const userIntent = storageResult?.userIntent;
+
+            if (userIntent && userIntent.trim().length > 3) {
+                console.log(`Surgical-Guard: Checking intent drift against "${userIntent}"...`);
+                
+                const driftResponse = await chrome.runtime.sendMessage({
+                    type: 'CHECK_INTENT_DRIFT',
+                    payload: { 
+                        pageText: pageText.substring(0, 500), // First 500 chars for efficiency
+                        userIntent: userIntent 
+                    }
+                });
+
+                if (driftResponse && driftResponse.isDrifting) {
+                    results.matches.push({
+                        detected: true,
+                        type: 'INTENT_DRIFT',
+                        subtype: `Semantic Drift: "${userIntent}" → "${driftResponse.detectedTopic}"`,
+                        score: driftResponse.driftScore,
+                        reasoning: [
+                            `Page content is ${(driftResponse.driftScore * 100).toFixed(0)}% divergent from your session intent.`,
+                            `Expected: "${userIntent}". Detected: "${driftResponse.detectedTopic}".`
+                        ],
+                        match: driftResponse.sample || ''
+                    });
+                }
+            }
+        } catch (e) {
+            console.warn("Surgical-Guard: Intent drift check failed", e);
         }
 
         return results;

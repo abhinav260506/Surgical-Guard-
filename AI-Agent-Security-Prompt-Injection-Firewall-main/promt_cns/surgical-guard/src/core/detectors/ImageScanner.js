@@ -1,18 +1,21 @@
-/**
- * ImageScanner.js
- * Scans images in the DOM for potential prompt injections using OCR.
- */
+import { createWorker } from 'tesseract.js';
 
 export const ImageScanner = {
     name: "ImageScanner",
     isInitialized: false,
+    worker: null,
 
     async init() {
         if (this.isInitialized) return;
-        // In a real implementation, we would load Tesseract.js or a Transformer OCR model.
-        // For this implementation, we will use a heuristic/mock that identifies "Inject-like" images
-        // by their alt text or data attributes, while paving the way for full OCR.
-        this.isInitialized = true;
+        
+        console.log("ImageScanner: Initializing Tesseract.js Worker...");
+        try {
+            this.worker = await createWorker('eng');
+            this.isInitialized = true;
+            console.log("ImageScanner: OCR Worker Ready.");
+        } catch (e) {
+            console.error("ImageScanner: OCR Init failed", e);
+        }
     },
 
     /**
@@ -28,19 +31,39 @@ export const ImageScanner = {
         const altText = imgNode.alt || "";
         const src = imgNode.src || "";
 
-        // Heuristic: If alt text or filename contains "prompt", "instruction", or "ignore"
-        // it's highly suspicious for a Visual Prompt Injection.
+        // 1. Fast Path: Metadata Check
         const suspiciousPattern = /\b(ignore|instruction|prompt|override|system)\b/i;
-
         if (suspiciousPattern.test(altText) || suspiciousPattern.test(src)) {
             findings.push({
                 detected: true,
                 type: 'VISUAL_INJECTION',
                 subtype: 'Suspect Image Metadata',
                 score: 0.8,
-                reasoning: [`Image metadata (alt/src) contains suspicious injection keywords: "${altText || src}"`],
+                reasoning: [`Image metadata contains suspicious keywords.`],
                 node: imgNode
             });
+            return findings;
+        }
+
+        // 2. Slow Path: Full OCR
+        if (this.isInitialized && src && (src.startsWith('http') || src.startsWith('data:'))) {
+            try {
+                console.log("ImageScanner: Running OCR on image...");
+                const { data: { text } } = await this.worker.recognize(src);
+                
+                if (text && suspiciousPattern.test(text)) {
+                    findings.push({
+                        detected: true,
+                        type: 'VISUAL_INJECTION',
+                        subtype: 'OCR Threat Detection',
+                        score: 0.95,
+                        reasoning: [`OCR detected suspicious text in image: "${text.substring(0, 50)}..."`],
+                        node: imgNode
+                    });
+                }
+            } catch (err) {
+                console.warn("ImageScanner: OCR scanning failed for image", src, err);
+            }
         }
 
         return findings;

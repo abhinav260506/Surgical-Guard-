@@ -96,8 +96,102 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             }, () => {
                 console.log("Background: Threat logged and correlated.");
             });
+
+            // Publish to Federated Blocklist (Privacy-Preserving)
+            matches.forEach(m => {
+                if (m.match) {
+                    publishToFederatedBlocklist(m.match);
+                }
+            });
         });
 
         return false;
     }
+
+    // HANDLER: Intent Drift Detection
+    if (request.type === 'CHECK_INTENT_DRIFT') {
+        const { pageText, userIntent } = request.payload;
+
+        (async () => {
+            try {
+                const { VectorEngine } = await import('../core/VectorEngine.js');
+                await VectorEngine.init();
+
+                const intentVec = await VectorEngine.vectorize(userIntent);
+                const pageVec = await VectorEngine.vectorize(pageText);
+                const driftScore = VectorEngine.cosineDistance(intentVec, pageVec);
+
+                const DRIFT_THRESHOLD = 0.55; // If > 55% distant from intent, flag it.
+
+                if (driftScore > DRIFT_THRESHOLD) {
+                    sendResponse({
+                        isDrifting: true,
+                        driftScore: driftScore,
+                        detectedTopic: pageText.substring(0, 40).trim() + '...',
+                        sample: pageText.substring(0, 80)
+                    });
+                } else {
+                    sendResponse({ isDrifting: false, driftScore: driftScore });
+                }
+            } catch (e) {
+                console.error("Background: Intent drift check failed", e);
+                sendResponse({ isDrifting: false, error: e.message });
+            }
+        })();
+
+        return true; // Async
+    }
+
+    // HANDLER: Federated Threat Intelligence Check
+    if (request.type === 'CHECK_FEDERATED') {
+        const { textFragment } = request.payload;
+
+        (async () => {
+            try {
+                const hash = await hashPayload(textFragment);
+                const syncResult = await new Promise(resolve => {
+                    chrome.storage.sync.get(['federatedBlocklist'], resolve);
+                });
+                const blocklist = syncResult.federatedBlocklist || [];
+
+                if (blocklist.includes(hash)) {
+                    sendResponse({ 
+                        isKnownThreat: true, 
+                        message: "⚡ Global Immunity: This vector was previously neutralized." 
+                    });
+                } else {
+                    sendResponse({ isKnownThreat: false });
+                }
+            } catch (e) {
+                sendResponse({ isKnownThreat: false, error: e.message });
+            }
+        })();
+
+        return true; // Async
+    }
 });
+
+// --- FEDERATED THREAT INTELLIGENCE: SHA-256 Hash Utility ---
+async function hashPayload(text) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(text.trim().toLowerCase());
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Publish a neutralized threat hash to the federated blocklist
+async function publishToFederatedBlocklist(threatText) {
+    const hash = await hashPayload(threatText);
+    
+    chrome.storage.sync.get(['federatedBlocklist'], (result) => {
+        const blocklist = result.federatedBlocklist || [];
+        
+        if (!blocklist.includes(hash)) {
+            const updated = [...blocklist, hash].slice(-200); // Keep last 200 hashes
+            chrome.storage.sync.set({ federatedBlocklist: updated }, () => {
+                console.log(`Federated Intel: Published threat hash ${hash.substring(0, 12)}...`);
+            });
+        }
+    });
+}
