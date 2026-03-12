@@ -69,7 +69,14 @@ export class TextLocator {
             // Pre-block whitespace could be added here if needed, 
             // but usually post-block newline is enough for separation.
 
+            // A. Traverse standard children
             node.childNodes.forEach(child => this._traverse(child));
+
+            // B. Traverse Shadow DOM (if exists)
+            if (node.shadowRoot) {
+                console.log(`TextLocator: Descending into Shadow Root of <${tagName}>`);
+                node.shadowRoot.childNodes.forEach(child => this._traverse(child));
+            }
 
             // Post-block newline (Virtual Segment)
             if (isBlock) {

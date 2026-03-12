@@ -6,6 +6,20 @@ function App() {
     const [threats, setThreats] = useState([]);
     const [scanning, setScanning] = useState(false);
     const [activeTabId, setActiveTabId] = useState(null);
+    const [userIntent, setUserIntent] = useState("");
+
+    useEffect(() => {
+        // Load initial intent
+        chrome.storage.local.get(['userIntent'], (result) => {
+            if (result.userIntent) setUserIntent(result.userIntent);
+        });
+    }, []);
+
+    const handleIntentChange = (e) => {
+        const value = e.target.value;
+        setUserIntent(value);
+        chrome.storage.local.set({ userIntent: value });
+    };
 
     useEffect(() => {
         // 1. Get the current active tab ID
@@ -70,6 +84,21 @@ function App() {
                 <div className={`w-3 h-3 rounded-full ${status === 'secure' ? 'bg-green-500 shadow-[0_0_10px_#22c55e]' : 'bg-red-500 shadow-[0_0_10px_#ef4444]'}`}></div>
             </header>
 
+            {/* User Intent Anchor */}
+            <div className="mb-4 p-3 bg-slate-800/50 rounded-xl border border-blue-500/20">
+                <label className="text-[10px] text-blue-400 font-bold uppercase tracking-widest block mb-1.5">
+                    🎯 Session Intent Anchor
+                </label>
+                <input 
+                    type="text" 
+                    placeholder="e.g., Paying a utility bill..." 
+                    value={userIntent}
+                    onChange={handleIntentChange}
+                    className="w-full bg-black/40 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 placeholder:text-slate-600 transition-all"
+                />
+                <p className="text-[9px] text-slate-500 mt-1 italic">Actions drifting from this goal will be flagged.</p>
+            </div>
+
             <div className="status-card mb-6 text-center flex-grow">
                 {status === 'secure' ? (
                     <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700 backdrop-blur-sm transition-all duration-300">
@@ -106,7 +135,30 @@ function App() {
                         <div key={i} className="text-xs bg-slate-800 p-2 rounded border-l-2 border-red-500 text-left mb-2">
                             <span className="font-bold text-red-300 block">{t.type}</span>
                             <span className="text-slate-400 block mb-1" title={t.subtype}>{t.subtype}</span>
-                            {t.match && (
+                            
+                            {/* XAI Heatmap Section */}
+                            {t.heatmap && (
+                                <div className="mt-2 mb-2 p-2 bg-black/40 rounded border border-slate-700">
+                                    <div className="text-[10px] text-slate-500 uppercase mb-1 font-bold">Semantic Heatmap (XAI)</div>
+                                    <div className="flex flex-wrap gap-1">
+                                        {t.heatmap.map((h, j) => (
+                                            <span 
+                                                key={j} 
+                                                style={{ 
+                                                    backgroundColor: `rgba(239, 68, 68, ${Math.max(0, h.score)})`,
+                                                    color: h.score > 0.4 ? 'white' : 'inherit'
+                                                }}
+                                                className="px-1 rounded transition-colors"
+                                                title={`Similarity: ${(h.score * 100).toFixed(1)}%`}
+                                            >
+                                                {h.word}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {t.match && !t.heatmap && (
                                 <div className="bg-black/30 p-1 rounded text-slate-500 font-mono break-all leading-tight">
                                     "{t.match.substring(0, 60)}{t.match.length > 60 ? '...' : ''}"
                                 </div>

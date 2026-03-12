@@ -1,4 +1,5 @@
 import { HiddenTextDetector } from './detectors/HiddenText.js';
+import { ImageScanner } from './detectors/ImageScanner.js';
 import { DirectiveScanner } from './detectors/DirectiveScanner.js'; // Re-imported for Fast Path
 // Sanitizer is used for DOM-level and Text-level sanitization
 import { Sanitizer } from './Sanitizer.js';
@@ -8,6 +9,7 @@ export class Scanner {
     constructor() {
         this.detectors = [
             HiddenTextDetector,
+            ImageScanner,
             DirectiveScanner
         ];
     }
@@ -24,15 +26,12 @@ export class Scanner {
 
         // 1. Single-Pass DOM Traversal (Extracts Text + Finds Hidden/Carriers + Redacts)
         const locator = new TextLocator(rootNode);
+        const imagesToScan = [];
 
         // Pass the detector and sanitizer to the locator so it can process nodes while building text
         locator.processNodeDuringTraversal = (node) => {
             // A. Clean Carriers (Comments & malicious scripts)
             if (node.nodeType === Node.COMMENT_NODE) {
-                node.remove();
-                return;
-            }
-            if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'SCRIPT' && node.type === 'text/plain') {
                 node.remove();
                 return;
             }
@@ -46,7 +45,12 @@ export class Scanner {
                     results.sanitizedCount++;
                 }
 
-                // C. Attribute PII Redaction
+                // C. Visual Injection (Collect for Async Pass)
+                if (node.tagName === 'IMG') {
+                    imagesToScan.push(node);
+                }
+
+                // D. Attribute PII Redaction
                 if (node.tagName === 'A') {
                     const href = node.getAttribute('href');
                     if (href && (href.includes('mailto:') || href.includes('@'))) {
@@ -57,19 +61,56 @@ export class Scanner {
                     }
                 }
             }
-
-            // D. Text Redaction (Handled inside TextLocator on text extraction)
-            if (node.nodeType === Node.TEXT_NODE) {
-                // Previously: Original text was proactively redacted here for all PII.
-                // Now: We only redact when processing actual matches later to not break safe emails.
-            }
         };
 
         // Build the text map and run processNodeDuringTraversal
         locator.build();
+
+        // 2. ASYNC PASS: Image Scanning (Performance Optimized)
+        if (imagesToScan.length > 0) {
+            console.log(`Scanner: Processing ${imagesToScan.length} images...`);
+            for (const imgNode of imagesToScan) {
+                // Yield to event loop every few images or just at the start of each
+                await new Promise(resolve => setTimeout(resolve, 0)); 
+                
+                const visualResults = await ImageScanner.scanImage(imgNode);
+                if (visualResults.length > 0) {
+                    visualResults.forEach(vr => {
+                        results.matches.push(vr);
+                        // Visual injections get blocked by removing/masking the image
+                        imgNode.style.filter = 'blur(20px)';
+                        imgNode.style.opacity = '0.3';
+                        imgNode.title = "[🚫 Blocked: Suspicious Visual Content]";
+                        results.sanitizedCount++;
+                    });
+                }
+            }
+        }
+
         const pageText = locator.getText();
 
         if (!pageText || pageText.trim().length === 0) return results;
+
+        // --- FEDERATED THREAT INTELLIGENCE: Pre-Check ---
+        try {
+            const federatedResponse = await chrome.runtime.sendMessage({
+                type: 'CHECK_FEDERATED',
+                payload: { textFragment: pageText.substring(0, 200) }
+            });
+
+            if (federatedResponse && federatedResponse.isKnownThreat) {
+                results.matches.push({
+                    detected: true,
+                    type: 'FEDERATED_KNOWN_THREAT',
+                    subtype: 'Global Immunity Match',
+                    score: 1.0,
+                    reasoning: [federatedResponse.message],
+                    match: pageText.substring(0, 60)
+                });
+            }
+        } catch (e) {
+            console.warn("Surgical-Guard: Federated check skipped", e);
+        }
 
         // --- FAST PATH: Synchronous Regex Scan ---
         try {
@@ -133,6 +174,43 @@ export class Scanner {
             }
         } catch (error) {
             console.error("Surgical-Guard: Failed to get analysis from background.", error);
+        }
+
+        // --- INTENT ANCHOR: Semantic Drift Detection ---
+        try {
+            const storageResult = await new Promise(resolve => {
+                chrome.storage.local.get(['userIntent'], resolve);
+            });
+
+            const userIntent = storageResult?.userIntent;
+
+            if (userIntent && userIntent.trim().length > 3) {
+                console.log(`Surgical-Guard: Checking intent drift against "${userIntent}"...`);
+                
+                const driftResponse = await chrome.runtime.sendMessage({
+                    type: 'CHECK_INTENT_DRIFT',
+                    payload: { 
+                        pageText: pageText.substring(0, 500), // First 500 chars for efficiency
+                        userIntent: userIntent 
+                    }
+                });
+
+                if (driftResponse && driftResponse.isDrifting) {
+                    results.matches.push({
+                        detected: true,
+                        type: 'INTENT_DRIFT',
+                        subtype: `Semantic Drift: "${userIntent}" → "${driftResponse.detectedTopic}"`,
+                        score: driftResponse.driftScore,
+                        reasoning: [
+                            `Page content is ${(driftResponse.driftScore * 100).toFixed(0)}% divergent from your session intent.`,
+                            `Expected: "${userIntent}". Detected: "${driftResponse.detectedTopic}".`
+                        ],
+                        match: driftResponse.sample || ''
+                    });
+                }
+            }
+        } catch (e) {
+            console.warn("Surgical-Guard: Intent drift check failed", e);
         }
 
         return results;

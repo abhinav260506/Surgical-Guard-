@@ -5,6 +5,7 @@
     "description": "AI Safety Firewall against indirect prompt injections",
     "permissions": [
         "activeTab",
+        "tabs",
         "scripting",
         "storage",
         "sidePanel"

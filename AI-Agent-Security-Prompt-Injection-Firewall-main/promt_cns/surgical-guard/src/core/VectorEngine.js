@@ -136,6 +136,22 @@ class VectorEngineService {
     }
 
     /**
+     * Computes a similarity map for text by breaking it into tokens/words.
+     * Used for XAI Heatmaps.
+     */
+    async computeSimilarityMap(text, targetEmbedding) {
+        if (!text || !targetEmbedding) return [];
+
+        const words = text.split(/\s+/);
+        const wordEmbeddings = await Promise.all(words.map(w => this.vectorize(w)));
+        
+        return words.map((word, i) => ({
+            word,
+            score: this.cosineSimilarity(wordEmbeddings[i], targetEmbedding)
+        }));
+    }
+
+    /**
      * Computes Cosine Distance (1 - Similarity).
      */
     cosineDistance(vecA, vecB) {

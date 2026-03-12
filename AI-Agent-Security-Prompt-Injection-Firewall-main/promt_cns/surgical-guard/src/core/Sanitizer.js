@@ -79,64 +79,75 @@ export const Sanitizer = {
     },
 
     /**
+     * Active Transmutation (I2D): Rewrites a command into a passive description.
+     */
+    transmute(text) {
+        if (!text) return "A neutral content block.";
+
+        // Mapping common injection patterns to passive descriptions
+        if (text.toLowerCase().includes('ignore') || text.toLowerCase().includes('instruction')) {
+            return "[ ℹ️ System Advisory: This text contains a request to modify or ignore previous AI instructions. ]";
+        }
+        if (text.toLowerCase().includes('send') || text.toLowerCase().includes('forward') || text.toLowerCase().includes('email')) {
+            return "[ ℹ️ System Advisory: This text contains a request to transmit or forward data to an external address. ]";
+        }
+        if (text.toLowerCase().includes('transfer') || text.toLowerCase().includes('money') || text.toLowerCase().includes('bank')) {
+            return "[ ℹ️ System Advisory: This text contains a request related to financial transactions or bank transfers. ]";
+        }
+        if (text.toLowerCase().includes('delete') || text.toLowerCase().includes('wipe')) {
+            return "[ ℹ️ System Advisory: This text contains a request to delete or remove data. ]";
+        }
+
+        return "[ ℹ️ System Advisory: This content was flagged as a potential directive and has been converted into a non-executable fact. ]";
+    },
+
+    /**
      * Sanitizes a specific DOM Range (Surgical)
      * AGGRESSIVE Update: Checks attributes and nukes risky elements.
      */
     sanitizeRange(range, findingTypeOrObject) {
         try {
-            // Step C: DOM Replacement (The "Firewall")
-
             // 1. Get current content
             const originalText = range.toString();
 
-            // Previously: Step B: Entity Redaction was applied unconditionally.
-            // Now: Redaction is only needed if building a custom string or replacement.
-            // But since the *entire malicious range* gets replaced with a warning, redaction of original
-            // text inside it is unnecessary (it goes away entirely).
-            const redactedText = originalText;
+            // 2. Perform Transmutation (I2D)
+            const transmutedText = this.transmute(originalText);
 
-            // 3. Prepare Warning
-            let warningText = " [ 🚫 Dangerous Directive Neutralized ] ";
-            let titleText = "Surgical-Guard has neutralized this content.";
+            // 3. Prepare Hover Info
+            let titleText = "Surgical-Guard has transmuted this content for your protection.";
 
             if (typeof findingTypeOrObject === 'object') {
                 const finding = findingTypeOrObject;
                 if (finding.type === 'ROLE_CONFLICT') {
-                    warningText = ` [ 🚫 Blocked: ${finding.subtype} ] `;
-                    titleText = `Semantic Analysis Result: ${finding.reasoning ? finding.reasoning[0] : 'Role Conflict'}`;
+                    titleText = `Semantic Conflict: ${finding.subtype} detected.`;
                 } else if (finding.type === 'MALICIOUS_DIRECTIVE') {
-                    warningText = ` [ 🚫 Command Removed: ${finding.subtype} ] `;
+                    titleText = `Directive Removed: ${finding.subtype} found.`;
                 }
             }
 
             // 4. Update DOM
-            // Gap 2: Set page-level taint flag
             document.documentElement.setAttribute('data-surgical-tainted', 'true');
-            if (typeof findingTypeOrObject === 'object' && findingTypeOrObject.severity) {
-                document.documentElement.setAttribute('data-taint-level', findingTypeOrObject.severity);
-            }
 
             // Create a wrapper
             const span = document.createElement('span');
-            span.style.color = '#dc2626';
-            span.style.backgroundColor = '#fee2e2';
-            span.style.borderBottom = '1px dashed #ef4444';
-            span.style.fontWeight = '600';
+            span.style.color = '#2563eb'; // Blue for informational
+            span.style.backgroundColor = '#eff6ff';
+            span.style.borderBottom = '1px dashed #3b82f6';
+            span.style.fontWeight = '500';
             span.style.padding = '0 4px';
+            span.style.fontStyle = 'italic';
             span.title = titleText;
             span.setAttribute('data-surgical-sanitized', 'true');
-
-            // Gap 2: Replace malicious text with a non-invertible fingerprint only
             span.setAttribute('data-threat-id', btoa(originalText.length + '-' + Date.now()));
 
-            // Set content: STRICT BLOCKING (Removed originalText to prevent AI scraping from data layers)
-            span.textContent = `${warningText}`;
+            // Set content: TRANSMUTED TEXT (Fact, not command)
+            span.textContent = transmutedText;
 
             // Sanitize: Delete content and insert new span
             range.deleteContents();
             range.insertNode(span);
 
-            // 5. ATTRIBUTE SCRUBBING
+            // 5. ATTRIBUTE SCRUBBING (Using Honeypots)
             const parent = range.commonAncestorContainer.nodeType === 1 ?
                 range.commonAncestorContainer :
                 range.commonAncestorContainer.parentNode;
@@ -145,16 +156,10 @@ export const Sanitizer = {
                 const riskyAttrs = ['aria-label', 'title', 'alt', 'placeholder', 'data-content', 'value'];
                 riskyAttrs.forEach(attr => {
                     if (parent.hasAttribute(attr)) {
-                        // Redact attributes too!
                         const attrVal = parent.getAttribute(attr);
-                        const redactedAttr = this.redactor.redact(attrVal);
-                        if (redactedAttr !== attrVal) {
-                            parent.setAttribute(attr, redactedAttr);
-                            console.log(`Surgical-Guard: Redacted PII in attribute '${attr}'.`);
-                        } else {
-                            // If no PII but malicious, scrub
-                            parent.removeAttribute(attr);
-                        }
+                        // Use honeypot mode for attributes to bait attackers
+                        const redactedAttr = this.redactor.redact(attrVal, [], true); 
+                        parent.setAttribute(attr, redactedAttr);
                     }
                 });
             }
