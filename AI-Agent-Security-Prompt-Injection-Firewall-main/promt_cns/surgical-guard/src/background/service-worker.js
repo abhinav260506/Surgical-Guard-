@@ -52,28 +52,52 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         chrome.action.setBadgeText({ text: '!' });
         chrome.action.setBadgeBackgroundColor({ color: '#FF0000' });
 
-        // Save to Activity Log
-        chrome.storage.local.get(['activityLog'], (result) => {
+        // --- CROSS-TAB CORRELATION LOGIC ---
+        chrome.storage.local.get(['globalThreatState', 'activityLog'], (result) => {
+            const state = result.globalThreatState || {};
             const logs = result.activityLog || [];
 
+            // Add this tab's primary threat type to global state
+            const primaryThreat = matches[0].type;
+            const tabId = sender.tab ? sender.tab.id : 'unknown';
+            state[tabId] = { type: primaryThreat, url: context.url, timestamp: Date.now() };
+
+            // Check for correlation (e.g., Tab A has 'Instruction Override' and Tab B has 'Data Exfiltration')
+            const uniqueThreats = new Set(Object.values(state).map(s => s.type));
+            if (uniqueThreats.has('MALICIOUS_DIRECTIVE') && uniqueThreats.size > 1) {
+                console.warn("🚨 CROSS-TAB CORRELATION: Multiple threat fragments detected across sessions!");
+                // Alert the user via a synthetic high-risk log
+                logs.unshift({
+                    id: 'correlation-' + Date.now(),
+                    timestamp: new Date().toISOString(),
+                    title: "CRITICAL: Cross-Tab Attack Correlated",
+                    url: "Shared Browser Context",
+                    threatCount: uniqueThreats.size,
+                    threatType: 'CROSS_TAB_CORRELATION',
+                    details: `Fragmented attack patterns detected across ${Object.keys(state).length} tabs.`
+                });
+            }
+
             const newEntry = {
-                id: Date.now().toString(), // Simple ID
+                id: Date.now().toString(),
                 timestamp: context.timestamp,
                 title: context.title,
                 url: context.url,
                 threatCount: count,
-                threatType: matches[0].type, // Log the primary threat type
+                threatType: primaryThreat,
                 details: matches.map(m => m.subtype || m.type).join(', ')
             };
 
-            // Prepend new log (Newest first)
-            const updatedLogs = [newEntry, ...logs].slice(0, 100); // Keep last 100
+            const updatedLogs = [newEntry, ...logs].slice(0, 100);
 
-            chrome.storage.local.set({ activityLog: updatedLogs }, () => {
-                console.log("Background: Threat logged successfully.");
+            chrome.storage.local.set({ 
+                activityLog: updatedLogs,
+                globalThreatState: state 
+            }, () => {
+                console.log("Background: Threat logged and correlated.");
             });
         });
 
-        return false; // Sync response is fine
+        return false;
     }
 });

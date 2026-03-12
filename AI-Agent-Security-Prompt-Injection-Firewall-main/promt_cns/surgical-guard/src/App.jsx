@@ -106,7 +106,30 @@ function App() {
                         <div key={i} className="text-xs bg-slate-800 p-2 rounded border-l-2 border-red-500 text-left mb-2">
                             <span className="font-bold text-red-300 block">{t.type}</span>
                             <span className="text-slate-400 block mb-1" title={t.subtype}>{t.subtype}</span>
-                            {t.match && (
+                            
+                            {/* XAI Heatmap Section */}
+                            {t.heatmap && (
+                                <div className="mt-2 mb-2 p-2 bg-black/40 rounded border border-slate-700">
+                                    <div className="text-[10px] text-slate-500 uppercase mb-1 font-bold">Semantic Heatmap (XAI)</div>
+                                    <div className="flex flex-wrap gap-1">
+                                        {t.heatmap.map((h, j) => (
+                                            <span 
+                                                key={j} 
+                                                style={{ 
+                                                    backgroundColor: `rgba(239, 68, 68, ${Math.max(0, h.score)})`,
+                                                    color: h.score > 0.4 ? 'white' : 'inherit'
+                                                }}
+                                                className="px-1 rounded transition-colors"
+                                                title={`Similarity: ${(h.score * 100).toFixed(1)}%`}
+                                            >
+                                                {h.word}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {t.match && !t.heatmap && (
                                 <div className="bg-black/30 p-1 rounded text-slate-500 font-mono break-all leading-tight">
                                     "{t.match.substring(0, 60)}{t.match.length > 60 ? '...' : ''}"
                                 </div>

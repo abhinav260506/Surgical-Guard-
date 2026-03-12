@@ -126,47 +126,39 @@ export const SemanticGuard = {
         const OUTLIER_DISTANCE_THRESHOLD = 0.50; // If distance from Doc Mean > 0.5, it is an OUTLIER.
 
         // 4. Hybrid Detection Loop
-        chunks.forEach((chunk, i) => {
+        for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
             const chunkVec = chunkVectors[i];
             const classification = this.classify(chunkVec);
 
             const chunkTopic = classification.context;
-            const anchorSimilarity = classification.score; // How close is it to the generic "Financial" definition?
-            const docDistance = VectorEngine.cosineDistance(chunkVec, docMeanVector); // How far is it from THIS document's topic?
-
-            // Debug
-            // console.log(`Chunk ${i}: [${chunkTopic}] AnchorSim:${anchorSimilarity.toFixed(2)} DocDist:${docDistance.toFixed(2)}`);
+            const anchorSimilarity = classification.score;
+            const docDistance = VectorEngine.cosineDistance(chunkVec, docMeanVector);
 
             const isRiskCategory = ['FINANCIAL_ACTION', 'IT_ADMIN_COMMANDS', 'URGENT_DIRECTIVE', 'INSTRUCTION_OVERRIDE', 'DATA_EXFILTRATION'].includes(chunkTopic);
-
-            // RULE 1: Zero Tolerance (Inherent Malice)
-            // Some things are never okay, regardless of context (e.g. Prompt Injection)
             const isZeroTolerance = ['INSTRUCTION_OVERRIDE', 'DATA_EXFILTRATION'].includes(chunkTopic);
 
             if (isZeroTolerance && anchorSimilarity > ANCHOR_SIMILARITY_THRESHOLD) {
+                const heatmap = await this._attachHeatmap(chunk, chunkTopic);
                 findings.push({
                     detected: true,
                     type: 'MALICIOUS_DIRECTIVE',
                     subtype: `Zero Tolerance: ${chunkTopic}`,
                     score: anchorSimilarity,
-                    reasoning: [`Transformer Model identified ${chunkTopic} with ${(anchorSimilarity * 100).toFixed(0)}% confidence. This category is strictly prohibited.`],
+                    reasoning: [`Transformer Model identified ${chunkTopic} with ${(anchorSimilarity * 100).toFixed(0)}% confidence.`],
                     match: chunk.text,
                     index: chunk.index,
                     end: chunk.end,
                     context: docTopic,
-                    target_context: chunkTopic
+                    target_context: chunkTopic,
+                    heatmap: heatmap
                 });
-                return; // Skip other checks for this chunk
+                continue;
             }
 
-            // RULE 2: Hybrid Context Hijacking (Outlier Detection)
-            // If it looks like a Risk Category AND it is an Outlier from the Document's Topic -> FLAG.
             if (isRiskCategory && anchorSimilarity > ANCHOR_SIMILARITY_THRESHOLD) {
-
-                // If the document itself IS about this topic (e.g. Financial Doc has Financial Chunks), 
-                // then docDistance will be LOW. We only flag if docDistance is HIGH.
-
                 if (docDistance > OUTLIER_DISTANCE_THRESHOLD) {
+                    const heatmap = await this._attachHeatmap(chunk, chunkTopic);
                     findings.push({
                         detected: true,
                         type: 'ROLE_CONFLICT',
@@ -180,15 +172,19 @@ export const SemanticGuard = {
                         index: chunk.index,
                         end: chunk.end,
                         context: docTopic,
-                        target_context: chunkTopic
+                        target_context: chunkTopic,
+                        heatmap: heatmap
                     });
-                } else {
-                    console.log(`Surgical-Guard: Allowed ${chunkTopic} because it matches Document Context (${docTopic}).`);
                 }
             }
-        });
+        }
 
         return findings;
+    },
+
+    async _attachHeatmap(chunk, targetTopic) {
+        const targetEmbedding = this.anchorEmbeddings[targetTopic];
+        return await VectorEngine.computeSimilarityMap(chunk.text, targetEmbedding);
     },
 
     readable(str) {
