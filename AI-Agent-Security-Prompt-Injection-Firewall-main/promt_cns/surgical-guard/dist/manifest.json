@@ -5,6 +5,7 @@
   "description": "AI Safety Firewall against indirect prompt injections",
   "permissions": [
     "activeTab",
+    "tabs",
     "scripting",
     "storage",
     "sidePanel"
@@ -22,7 +23,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/content-script.js-loader-T9tEx8y6.js"
+        "assets/content-script.js-loader--Cproqbm.js"
       ],
       "matches": [
         "<all_urls>"
@@ -37,7 +38,7 @@
       ],
       "resources": [
         "assets/DirectiveScanner-uQNjlNut.js",
-        "assets/content-script.js-KnjhCiEz.js"
+        "assets/content-script.js-BVamHdiY.js"
       ],
       "use_dynamic_url": false
     }
